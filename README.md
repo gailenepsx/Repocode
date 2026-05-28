@@ -1,55 +1,111 @@
-BUS_KW = [
-    "group", "groupe", "grupo", "gruppo", "holding", "holdings",
-    "company", "co", "corp", "corporation", "inc", "incorporated",
-    "limited", "ltd", "llc", "plc", "sa", "sas", "sasu", "sarl",
-    "eurl", "bv", "nv", "ag", "gmbh", "ug", "kg", "kgaa", "oy",
-    "ab", "as", "spa", "srl", "sl", "slu", "lda",
+def load_spacy_models():
+    models = []
+    candidates = [
+        ("xx_ent_wiki_sm", "xx"),
+        ("fr_core_news_sm", "fr"),
+        ("en_core_web_sm", "en"),
+    ]
 
-    "partners", "capital", "ventures", "investment", "investments",
-    "asset", "assets", "finance", "financial", "fund", "funds",
-    "bank", "banque", "banco", "insurance", "assurance", "assicurazioni",
+    if spacy is None:
+        return models
 
-    "consulting", "consultants", "conseil", "beratung", "advisory",
-    "services", "service", "solutions", "systems", "systemes", "systeme",
-    "technology", "technologies", "technologie", "technologies",
-    "tech", "digital", "data", "software", "it", "informatics",
-    "informatique", "informatica", "ingenierie", "engineering",
-    "engineers", "ingegneria", "ingenieria",
+    for model_name, lang in candidates:
+        try:
+            nlp = spacy.load(model_name)
+            models.append({
+                "name": model_name,
+                "lang": lang,
+                "nlp": nlp
+            })
+            print(f"Loaded spaCy model: {model_name} | pipes={nlp.pipe_names}")
+        except Exception:
+            print(f"Could not load spaCy model: {model_name}")
 
-    "logistics", "logistic", "supply", "transport", "transports",
-    "mobility", "distribution", "trading", "commerce", "import", "export",
-    "procurement", "sourcing", "shipping", "freight",
+    return models
 
-    "construction", "constructions", "building", "batiment", "btp",
-    "realestate", "real", "estate", "property", "properties",
-    "immobilier", "immobilien", "facility", "facilities",
 
-    "industrie", "industries", "industry", "industrial", "manufacturing",
-    "manufacture", "factory", "production", "process", "automation",
-    "mechanical", "electrical", "electronic", "electronics",
+def normalize_ent_label(label):
+    label = (label or "").upper()
+    if label in {"PERSON", "PER"}:
+        return "PERSON"
+    if label == "ORG":
+        return "ORG"
+    return label
 
-    "energy", "energies", "power", "utilities", "utility", "renewable",
-    "renewables", "solar", "wind", "petroleum", "gas", "mining", "steel",
 
-    "telecom", "telecoms", "telecommunications", "media", "communications",
-    "network", "networks", "security", "cybersecurity", "defense", "defence",
+def spacy_vote_entity(raw, nlp_models):
+    if not raw or not nlp_models:
+        return {
+            "decision": "",
+            "evidence": "No spaCy model available",
+            "person_votes": 0,
+            "org_votes": 0,
+            "model_hits": []
+        }
 
-    "pharma", "pharmaceutical", "pharmaceuticals", "medical", "health",
-    "healthcare", "clinic", "clinique", "hospital", "laboratory",
-    "laboratories", "laboratoire", "lab", "labs", "biotech", "bio",
+    model_hits = []
+    person_votes = 0
+    org_votes = 0
 
-    "retail", "wholesale", "store", "stores", "shop", "shops",
-    "market", "markets", "foods", "food", "beverage", "beverages",
-    "restaurant", "restaurants", "cafe", "hotel", "hotels", "hospitality",
-    "travel", "tourism", "leisure",
+    for model in nlp_models:
+        nlp = model["nlp"]
+        model_name = model["name"]
 
-    "motors", "automotive", "auto", "mobility", "aviation", "aerospace",
-    "marine", "rail", "motorsport",
+        try:
+            doc = nlp(raw)
+        except Exception:
+            continue
 
-    "association", "foundation", "federation", "union", "chamber",
-    "cooperative", "cooperation", "institution", "institut", "institute",
-    "organization", "organisation", "authority", "agency",
+        ents = []
+        for ent in getattr(doc, "ents", []):
+            norm_label = normalize_ent_label(ent.label_)
+            ents.append((ent.text, norm_label))
 
-    "university", "universite", "universidad", "universita",
-    "school", "college", "academy", "research", "innovation", "scientific"
-]
+        hit = {
+            "model": model_name,
+            "person": False,
+            "org": False,
+            "ents": ents
+        }
+
+        if any(lbl == "PERSON" for _, lbl in ents):
+            hit["person"] = True
+            person_votes += 1
+
+        if any(lbl == "ORG" for _, lbl in ents):
+            hit["org"] = True
+            org_votes += 1
+
+        model_hits.append(hit)
+
+    tokens = [t for t in norm(raw).split() if t]
+    token_count = len(tokens)
+
+    decision = ""
+    if org_votes >= 1 and person_votes == 0:
+        decision = "Business"
+    elif person_votes >= 2:
+        decision = "Individual"
+    elif person_votes == 1 and org_votes == 0 and 2 <= token_count <= 4:
+        decision = "Individual"
+
+    parts = []
+    for h in model_hits:
+        ent_txt = ", ".join([f"{txt}:{lbl}" for txt, lbl in h["ents"]]) if h["ents"] else "no entities"
+        parts.append(
+            f"{h['model']} -> person={h['person']} org={h['org']} ents=[{ent_txt}]"
+        )
+
+    evidence = (
+        f"spaCy vote decision={decision or 'none'}; "
+        f"person_votes={person_votes}; org_votes={org_votes}; "
+        + " | ".join(parts)
+    )
+
+    return {
+        "decision": decision,
+        "evidence": evidence,
+        "person_votes": person_votes,
+        "org_votes": org_votes,
+        "model_hits": model_hits
+    }
