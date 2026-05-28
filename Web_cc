@@ -1,115 +1,79 @@
-def classify(line1, nlp_models, pdl_set, pidx, narr, nidx):
-    raw = "" if pd.isna(line1) else str(line1).strip()
-    s = norm(raw)
+def names_rule(s, narr, nidx):
+    raw_tokens = [x for x in s.split() if x]
+    ts = [x for x in raw_tokens if len(x) >= 2 and x not in PART]
 
-    r = {
-        "normalized_line1": s,
-        "predicted_entity_type": "Review",
-        "classification_rule": "7_other_cases_review",
-        "classification_evidence": "No rule matched",
-        "evidence": "",
-        "best_pdl_match": "",
-        "best_pdl_score": "",
-        "best_names_dataset_match": "",
-        "best_names_dataset_score": "",
-        "spacy_vote_person": "",
-        "spacy_vote_org": "",
-        "spacy_vote_evidence": ""
-    }
+    if not narr or not nidx:
+        return False, "", "", 0.0
 
-    if not s:
-        r["classification_evidence"] = "LINE1 empty after normalization"
-        r["evidence"] = "Review: LINE1 is empty after normalization"
-        return r
+    # never classify 1-token strings as Individual via names_dataset
+    if len(ts) not in (2, 3):
+        return False, "", "", 0.0
 
-    # 1) Business suffix anywhere
-    z = suffix_hit(raw)
-    if z:
-        r["predicted_entity_type"] = "Business"
-        r["classification_rule"] = "1_business_suffix"
-        r["classification_evidence"] = f"business suffix detected='{z}'"
-        r["evidence"] = f"Business because suffix '{z}' was detected in the name"
-        return r
+    # strong structural guards
+    if detect_business_suffix_anywhere(" ".join(raw_tokens)):
+        return False, "", "", 0.0
 
-    # 2) spaCy business keywords
-    # keep this only if you still want it
-    # if not, you can remove this block
-    if nlp_models:
-        try:
-            doc0 = nlp_models[0]["nlp"](raw)
-        except Exception:
-            doc0 = None
-    else:
-        doc0 = None
+    if any(any(ch.isdigit() for ch in t) for t in ts):
+        return False, "", "", 0.0
 
-    z = kw_hit(doc0)
-    if z:
-        r["predicted_entity_type"] = "Business"
-        r["classification_rule"] = "2_spacy_business_keywords"
-        r["classification_evidence"] = f"business keyword='{z}'"
-        r["evidence"] = f"Business because spaCy/business keyword '{z}' was found"
-        return r
+    if any(len(t) == 1 for t in ts):
+        return False, "", "", 0.0
 
-    # 3) exact PDL
-    if s in pdl_set:
-        r["predicted_entity_type"] = "Business"
-        r["classification_rule"] = "4_exact_pdl_match"
-        r["classification_evidence"] = "exact normalized PDL match"
-        r["best_pdl_match"] = s
-        r["best_pdl_score"] = 100.0
-        r["evidence"] = f"Business because LINE1 exactly matched PDL '{s}'"
-        return r
+    # reject very noisy tokens
+    if any(not re.fullmatch(r"[a-zA-ZÀ-ÿ-]+", t) for t in ts):
+        return False, "", "", 0.0
 
-    # 4) fuzzy PDL
-    pm, ps = best(s, pidx, 0, 2000)
-    r["best_pdl_match"] = pm
-    r["best_pdl_score"] = ps if pm else ""
+    first_tok = ts[0]
+    last_tok = ts[-1]
 
-    if pm and ps > 94.0:
-        r["predicted_entity_type"] = "Business"
-        r["classification_rule"] = "5_fuzzy_pdl_match"
-        r["classification_evidence"] = f"PDL '{pm}' score={ps:.1f} > 94.0"
-        r["evidence"] = f"Business because fuzzy PDL match '{pm}' scored {ps:.1f}"
-        return r
+    first_pool = cands(first_tok, nidx, 1500) or narr
+    last_pool = cands(last_tok, nidx, 1500) or narr
 
-    # 5) spaCy multi-model vote
-    vote = spacy_vote_entity(raw, nlp_models)
-    r["spacy_vote_person"] = vote["person_votes"]
-    r["spacy_vote_org"] = vote["org_votes"]
-    r["spacy_vote_evidence"] = vote["evidence"]
-
-    if vote["decision"] == "Business":
-        r["predicted_entity_type"] = "Business"
-        r["classification_rule"] = "3_spacy_multimodel_org_vote"
-        r["classification_evidence"] = vote["evidence"]
-        r["evidence"] = f"Business because spaCy models voted ORG: {vote['evidence']}"
-        return r
-
-    if vote["decision"] == "Individual":
-        r["predicted_entity_type"] = "Individual"
-        r["classification_rule"] = "3_spacy_multimodel_person_vote"
-        r["classification_evidence"] = vote["evidence"]
-        r["evidence"] = f"Individual because spaCy models voted PERSON: {vote['evidence']}"
-        return r
-
-    # 6) names_dataset strict fallback
-    ok, ev, nm, ns = names_rule(s, narr, nidx)
-    r["best_names_dataset_match"] = nm
-    r["best_names_dataset_score"] = ns if nm else ""
-
-    if ok:
-        r["predicted_entity_type"] = "Individual"
-        r["classification_rule"] = "6_fuzzy_names_dataset_match"
-        r["classification_evidence"] = "names_dataset " + ev
-        r["evidence"] = f"Individual because strict names_dataset rule matched: {ev}"
-        return r
-
-    # 7) review
-    pdl_txt = f"best PDL='{pm}' score={ps:.1f}" if pm else "no PDL candidate"
-    nd_txt = f"best names_dataset='{nm}' score={ns:.1f}" if nm else "no names_dataset candidate"
-    r["classification_evidence"] = "No rule matched"
-    r["evidence"] = (
-        f"Review because no rule matched strongly enough; "
-        f"{pdl_txt}; {nd_txt}; {vote['evidence']}"
+    first_res = process.extractOne(
+        first_tok,
+        first_pool,
+        scorer=fuzz.ratio,
+        processor=utils.default_process
     )
-    return r
+    last_res = process.extractOne(
+        last_tok,
+        last_pool,
+        scorer=fuzz.ratio,
+        processor=utils.default_process
+    )
+
+    if not first_res or not last_res:
+        return False, "", "", 0.0
+
+    fm, fs = first_res[0], float(first_res[1])
+    lm, ls = last_res[0], float(last_res[1])
+
+    # strong thresholds
+    if fs < 97.0 or ls < 97.0:
+        return False, "", "", 0.0
+
+    if len(ts) == 3:
+        middle_tok = ts[1]
+        middle_pool = cands(middle_tok, nidx, 1500) or narr
+        middle_res = process.extractOne(
+            middle_tok,
+            middle_pool,
+            scorer=fuzz.ratio,
+            processor=utils.default_process
+        )
+        if not middle_res:
+            return False, "", "", 0.0
+
+        mm, ms = middle_res[0], float(middle_res[1])
+        if ms < 96.0:
+            return False, "", "", 0.0
+
+        ev = (
+            f"first='{first_tok}'~'{fm}' {fs:.1f}; "
+            f"middle='{middle_tok}'~'{mm}' {ms:.1f}; "
+            f"last='{last_tok}'~'{lm}' {ls:.1f}"
+        )
+        return True, ev, f"{fm}|{mm}|{lm}", min(fs, ms, ls)
+
+    ev = f"first='{first_tok}'~'{fm}' {fs:.1f}; last='{last_tok}'~'{lm}' {ls:.1f}"
+    return True, ev, f"{fm}|{lm}", min(fs, ls)
