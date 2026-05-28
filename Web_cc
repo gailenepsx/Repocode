@@ -1,111 +1,115 @@
-def load_spacy_models():
-    models = []
-    candidates = [
-        ("xx_ent_wiki_sm", "xx"),
-        ("fr_core_news_sm", "fr"),
-        ("en_core_web_sm", "en"),
-    ]
+def classify(line1, nlp_models, pdl_set, pidx, narr, nidx):
+    raw = "" if pd.isna(line1) else str(line1).strip()
+    s = norm(raw)
 
-    if spacy is None:
-        return models
-
-    for model_name, lang in candidates:
-        try:
-            nlp = spacy.load(model_name)
-            models.append({
-                "name": model_name,
-                "lang": lang,
-                "nlp": nlp
-            })
-            print(f"Loaded spaCy model: {model_name} | pipes={nlp.pipe_names}")
-        except Exception:
-            print(f"Could not load spaCy model: {model_name}")
-
-    return models
-
-
-def normalize_ent_label(label):
-    label = (label or "").upper()
-    if label in {"PERSON", "PER"}:
-        return "PERSON"
-    if label == "ORG":
-        return "ORG"
-    return label
-
-
-def spacy_vote_entity(raw, nlp_models):
-    if not raw or not nlp_models:
-        return {
-            "decision": "",
-            "evidence": "No spaCy model available",
-            "person_votes": 0,
-            "org_votes": 0,
-            "model_hits": []
-        }
-
-    model_hits = []
-    person_votes = 0
-    org_votes = 0
-
-    for model in nlp_models:
-        nlp = model["nlp"]
-        model_name = model["name"]
-
-        try:
-            doc = nlp(raw)
-        except Exception:
-            continue
-
-        ents = []
-        for ent in getattr(doc, "ents", []):
-            norm_label = normalize_ent_label(ent.label_)
-            ents.append((ent.text, norm_label))
-
-        hit = {
-            "model": model_name,
-            "person": False,
-            "org": False,
-            "ents": ents
-        }
-
-        if any(lbl == "PERSON" for _, lbl in ents):
-            hit["person"] = True
-            person_votes += 1
-
-        if any(lbl == "ORG" for _, lbl in ents):
-            hit["org"] = True
-            org_votes += 1
-
-        model_hits.append(hit)
-
-    tokens = [t for t in norm(raw).split() if t]
-    token_count = len(tokens)
-
-    decision = ""
-    if org_votes >= 1 and person_votes == 0:
-        decision = "Business"
-    elif person_votes >= 2:
-        decision = "Individual"
-    elif person_votes == 1 and org_votes == 0 and 2 <= token_count <= 4:
-        decision = "Individual"
-
-    parts = []
-    for h in model_hits:
-        ent_txt = ", ".join([f"{txt}:{lbl}" for txt, lbl in h["ents"]]) if h["ents"] else "no entities"
-        parts.append(
-            f"{h['model']} -> person={h['person']} org={h['org']} ents=[{ent_txt}]"
-        )
-
-    evidence = (
-        f"spaCy vote decision={decision or 'none'}; "
-        f"person_votes={person_votes}; org_votes={org_votes}; "
-        + " | ".join(parts)
-    )
-
-    return {
-        "decision": decision,
-        "evidence": evidence,
-        "person_votes": person_votes,
-        "org_votes": org_votes,
-        "model_hits": model_hits
+    r = {
+        "normalized_line1": s,
+        "predicted_entity_type": "Review",
+        "classification_rule": "7_other_cases_review",
+        "classification_evidence": "No rule matched",
+        "evidence": "",
+        "best_pdl_match": "",
+        "best_pdl_score": "",
+        "best_names_dataset_match": "",
+        "best_names_dataset_score": "",
+        "spacy_vote_person": "",
+        "spacy_vote_org": "",
+        "spacy_vote_evidence": ""
     }
+
+    if not s:
+        r["classification_evidence"] = "LINE1 empty after normalization"
+        r["evidence"] = "Review: LINE1 is empty after normalization"
+        return r
+
+    # 1) Business suffix anywhere
+    z = suffix_hit(raw)
+    if z:
+        r["predicted_entity_type"] = "Business"
+        r["classification_rule"] = "1_business_suffix"
+        r["classification_evidence"] = f"business suffix detected='{z}'"
+        r["evidence"] = f"Business because suffix '{z}' was detected in the name"
+        return r
+
+    # 2) spaCy business keywords
+    # keep this only if you still want it
+    # if not, you can remove this block
+    if nlp_models:
+        try:
+            doc0 = nlp_models[0]["nlp"](raw)
+        except Exception:
+            doc0 = None
+    else:
+        doc0 = None
+
+    z = kw_hit(doc0)
+    if z:
+        r["predicted_entity_type"] = "Business"
+        r["classification_rule"] = "2_spacy_business_keywords"
+        r["classification_evidence"] = f"business keyword='{z}'"
+        r["evidence"] = f"Business because spaCy/business keyword '{z}' was found"
+        return r
+
+    # 3) exact PDL
+    if s in pdl_set:
+        r["predicted_entity_type"] = "Business"
+        r["classification_rule"] = "4_exact_pdl_match"
+        r["classification_evidence"] = "exact normalized PDL match"
+        r["best_pdl_match"] = s
+        r["best_pdl_score"] = 100.0
+        r["evidence"] = f"Business because LINE1 exactly matched PDL '{s}'"
+        return r
+
+    # 4) fuzzy PDL
+    pm, ps = best(s, pidx, 0, 2000)
+    r["best_pdl_match"] = pm
+    r["best_pdl_score"] = ps if pm else ""
+
+    if pm and ps > 94.0:
+        r["predicted_entity_type"] = "Business"
+        r["classification_rule"] = "5_fuzzy_pdl_match"
+        r["classification_evidence"] = f"PDL '{pm}' score={ps:.1f} > 94.0"
+        r["evidence"] = f"Business because fuzzy PDL match '{pm}' scored {ps:.1f}"
+        return r
+
+    # 5) spaCy multi-model vote
+    vote = spacy_vote_entity(raw, nlp_models)
+    r["spacy_vote_person"] = vote["person_votes"]
+    r["spacy_vote_org"] = vote["org_votes"]
+    r["spacy_vote_evidence"] = vote["evidence"]
+
+    if vote["decision"] == "Business":
+        r["predicted_entity_type"] = "Business"
+        r["classification_rule"] = "3_spacy_multimodel_org_vote"
+        r["classification_evidence"] = vote["evidence"]
+        r["evidence"] = f"Business because spaCy models voted ORG: {vote['evidence']}"
+        return r
+
+    if vote["decision"] == "Individual":
+        r["predicted_entity_type"] = "Individual"
+        r["classification_rule"] = "3_spacy_multimodel_person_vote"
+        r["classification_evidence"] = vote["evidence"]
+        r["evidence"] = f"Individual because spaCy models voted PERSON: {vote['evidence']}"
+        return r
+
+    # 6) names_dataset strict fallback
+    ok, ev, nm, ns = names_rule(s, narr, nidx)
+    r["best_names_dataset_match"] = nm
+    r["best_names_dataset_score"] = ns if nm else ""
+
+    if ok:
+        r["predicted_entity_type"] = "Individual"
+        r["classification_rule"] = "6_fuzzy_names_dataset_match"
+        r["classification_evidence"] = "names_dataset " + ev
+        r["evidence"] = f"Individual because strict names_dataset rule matched: {ev}"
+        return r
+
+    # 7) review
+    pdl_txt = f"best PDL='{pm}' score={ps:.1f}" if pm else "no PDL candidate"
+    nd_txt = f"best names_dataset='{nm}' score={ns:.1f}" if nm else "no names_dataset candidate"
+    r["classification_evidence"] = "No rule matched"
+    r["evidence"] = (
+        f"Review because no rule matched strongly enough; "
+        f"{pdl_txt}; {nd_txt}; {vote['evidence']}"
+    )
+    return r
