@@ -1,27 +1,55 @@
-legal_form_codes = [
-    'Sh.p.k.', 'Sh.a.', 'Degë', 'Ndërmarrje Individuale', 'SL', 'SA',
-    'Unipersonal', 'GmbH', 'AG', 'KG', 'OG', 'EG', 'EP', 'OOO', 'OAO',
-    'ZAO', 'UP', 'IP', 'BV / SRL', 'NV / SA', 'CV / SC', 'VOF / SNC',
-    'CommV / SComm', 'Eenmanszaak', 'd.o.o.', 'd.d.', 'k.d.', 'j.d.o.o.',
-    'OOD', 'AD', 'ET', 'KD', 'SD', 'o.t.', 'Ltd', 'Plc', 'Partnership',
-    'Sole Proprietorship', 's.r.o.', 'a.s.', 'v.o.s.', 'k.s.', 'OSVČ',
-    'ApS', 'A/S', 'I/S', 'K/S', 'P/S', 'Enkeltmandsvirksomhed', 'OÜ',
-    'AS', 'TÜ', 'UÜ', 'FIE', 'Oy / Ab', 'Oyj / Abp', 'Ky / Kb',
-    'Ay / Öb', 'Osk', 'Tmi', 'SARL', 'SAS', 'SASU', 'EURL', 'SNC',
-    'Auto-entrepreneur / Micro-entreprise', 'SCI', 'UG', 'OHG', 'GbR',
-    'e.K.', 'eG', 'EPE', 'AE', 'IKE', 'OE', 'EE', 'Kft.', 'Zrt.',
-    'Nyrt.', 'Bt.', 'Kkt.', 'EV', 'ehf.', 'hf.', 'sf.', 'ses.', 'DAC',
-    'PLC', 'LLP', 'UC', 'Sole Trader', 'S.r.l.', 'S.p.A.', 'S.a.s.',
-    'S.n.c.', 'Ditta Individuale', 'S.r.l.s.', 'Biznes Individual', 'SIA',
-    'PS', 'KS', 'IK', 'Anstalt', 'Stiftung', 'UAB', 'AB', 'MB', 'IĮ',
-    'TŪB', 'KUB', 'Sàrl', 'SCA', 'SCS', 'SOPARFI', 'SICAR', 'DOO', 'TP',
-    'Partnership en Commandite', 'SRL', 'ÎI', 'ÎCS', 'a.d.', 'o.d.',
-    's.p.', 'BV', 'NV', 'VOF', 'CV', 'Maatschap', 'Coöperatie', 'ASA',
-    'DA', 'ANS', 'ENK', 'sp. z o.o.', 'PSA', 'sp.j.', 'sp.k.',
-    'sp.k-a.', 'JDG', 'Lda.', 'ENI', 'EIRL', 'PFA', 'RA', 'PAO', 'AO',
-    'GK', 'PR', 'SZČO', 'd.n.o.', 'S.L.', 'S.A.', 'S.L.U.', 'S.L.N.E.',
-    'S.C.', 'S.Com.', 'Autónomo', 'S. Coop.', 'HB', 'KB', 'EF',
-    'Ekonomisk förening', 'GmbH / Sàrl / Sagl', 'AG / SA', 'KG / SC',
-    'KlG / SNC', 'Einzelunternehmen', 'Genossenschaft / Coopérative',
-    'TOV', 'PAT', 'PP', 'FOP', 'LP', 'CIC', 'CIO'
+BUS_KW = [
+    "group", "groupe", "grupo", "gruppo", "holding", "holdings",
+    "company", "co", "corp", "corporation", "inc", "incorporated",
+    "limited", "ltd", "llc", "plc", "sa", "sas", "sasu", "sarl",
+    "eurl", "bv", "nv", "ag", "gmbh", "ug", "kg", "kgaa", "oy",
+    "ab", "as", "spa", "srl", "sl", "slu", "lda",
+
+    "partners", "capital", "ventures", "investment", "investments",
+    "asset", "assets", "finance", "financial", "fund", "funds",
+    "bank", "banque", "banco", "insurance", "assurance", "assicurazioni",
+
+    "consulting", "consultants", "conseil", "beratung", "advisory",
+    "services", "service", "solutions", "systems", "systemes", "systeme",
+    "technology", "technologies", "technologie", "technologies",
+    "tech", "digital", "data", "software", "it", "informatics",
+    "informatique", "informatica", "ingenierie", "engineering",
+    "engineers", "ingegneria", "ingenieria",
+
+    "logistics", "logistic", "supply", "transport", "transports",
+    "mobility", "distribution", "trading", "commerce", "import", "export",
+    "procurement", "sourcing", "shipping", "freight",
+
+    "construction", "constructions", "building", "batiment", "btp",
+    "realestate", "real", "estate", "property", "properties",
+    "immobilier", "immobilien", "facility", "facilities",
+
+    "industrie", "industries", "industry", "industrial", "manufacturing",
+    "manufacture", "factory", "production", "process", "automation",
+    "mechanical", "electrical", "electronic", "electronics",
+
+    "energy", "energies", "power", "utilities", "utility", "renewable",
+    "renewables", "solar", "wind", "petroleum", "gas", "mining", "steel",
+
+    "telecom", "telecoms", "telecommunications", "media", "communications",
+    "network", "networks", "security", "cybersecurity", "defense", "defence",
+
+    "pharma", "pharmaceutical", "pharmaceuticals", "medical", "health",
+    "healthcare", "clinic", "clinique", "hospital", "laboratory",
+    "laboratories", "laboratoire", "lab", "labs", "biotech", "bio",
+
+    "retail", "wholesale", "store", "stores", "shop", "shops",
+    "market", "markets", "foods", "food", "beverage", "beverages",
+    "restaurant", "restaurants", "cafe", "hotel", "hotels", "hospitality",
+    "travel", "tourism", "leisure",
+
+    "motors", "automotive", "auto", "mobility", "aviation", "aerospace",
+    "marine", "rail", "motorsport",
+
+    "association", "foundation", "federation", "union", "chamber",
+    "cooperative", "cooperation", "institution", "institut", "institute",
+    "organization", "organisation", "authority", "agency",
+
+    "university", "universite", "universidad", "universita",
+    "school", "college", "academy", "research", "innovation", "scientific"
 ]
