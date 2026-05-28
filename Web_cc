@@ -1,64 +1,25 @@
-def individual_score(raw, s, nlp_models, narr, nidx, pidx):
-    score = 0
-    reasons = []
+    # 5) no direct Individual from spaCy anymore
+    # 6) no direct Individual from names_dataset anymore
+    ind = individual_score(raw, s, nlp_models, narr, nidx, pidx)
 
-    toks = [x for x in s.split() if x]
-    token_count = len(toks)
+    r["spacy_vote_person"] = ind["vote"]["person_votes"]
+    r["spacy_vote_org"] = ind["vote"]["org_votes"]
+    r["spacy_vote_evidence"] = ind["vote"]["evidence"]
+    if ind["names_match"]:
+        r["best_names_dataset_match"] = ind["names_match"]
+        r["best_names_dataset_score"] = ind["names_score"]
 
-    # 1) basic person-like structure
-    if 2 <= token_count <= 3:
-        score += 2
-        reasons.append("2-3 tokens")
-    elif token_count == 4:
-        score += 1
-        reasons.append("4 tokens")
-    else:
-        reasons.append("token count not ideal")
+    if ind["score"] >= 6:
+        r["predicted_entity_type"] = "Individual"
+        r["classification_rule"] = "6_individual_evidence_score"
+        r["classification_evidence"] = "; ".join(ind["reasons"])
+        r["evidence"] = f"Individual because evidence score={ind['score']} | " + "; ".join(ind["reasons"])
+        return r
 
-    if any(any(ch.isdigit() for ch in t) for t in toks):
-        score -= 4
-        reasons.append("contains digits")
-
-    if detect_business_suffix_anywhere(raw):
-        score -= 8
-        reasons.append("business suffix detected")
-
-    # 2) PDL proximity should strongly penalize Individual
-    pm, ps = best(s, pidx, 0, 2000)
-    if pm:
-        if ps >= 96:
-            score -= 8
-            reasons.append(f"very close PDL match {pm} {ps:.1f}")
-        elif ps >= 93:
-            score -= 4
-            reasons.append(f"moderate PDL match {pm} {ps:.1f}")
-
-    # 3) spaCy vote
-    vote = spacy_vote_entity(raw, nlp_models)
-    if vote["person_votes"] >= 2 and vote["org_votes"] == 0:
-        score += 4
-        reasons.append(f"strong PERSON vote {vote['person_votes']}")
-    elif vote["person_votes"] == 1 and vote["org_votes"] == 0:
-        score += 2
-        reasons.append("weak PERSON vote")
-    elif vote["org_votes"] >= 1:
-        score -= 4
-        reasons.append(f"ORG vote {vote['org_votes']}")
-
-    # 4) names_dataset strict fallback contributes to score only
-    ok, ev, nm, ns = names_rule(s, narr, nidx)
-    if ok:
-        score += 3
-        reasons.append(f"names_dataset strong match {ns:.1f}")
-    else:
-        reasons.append("no strict names_dataset match")
-
-    return {
-        "score": score,
-        "reasons": reasons,
-        "vote": vote,
-        "best_pdl_match": pm,
-        "best_pdl_score": ps if pm else 0.0,
-        "names_match": nm if ok else "",
-        "names_score": ns if ok else 0.0
-    }
+    r["classification_rule"] = "7_other_cases_review"
+    r["classification_evidence"] = f"insufficient individual evidence score={ind['score']}"
+    r["evidence"] = (
+        f"Review because evidence score={ind['score']} is insufficient; "
+        + "; ".join(ind["reasons"])
+    )
+    return r
