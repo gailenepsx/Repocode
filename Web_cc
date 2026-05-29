@@ -1,25 +1,327 @@
-    # 5) no direct Individual from spaCy anymore
-    # 6) no direct Individual from names_dataset anymore
-    ind = individual_score(raw, s, nlp_models, narr, nidx, pidx)
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-    r["spacy_vote_person"] = ind["vote"]["person_votes"]
-    r["spacy_vote_org"] = ind["vote"]["org_votes"]
-    r["spacy_vote_evidence"] = ind["vote"]["evidence"]
-    if ind["names_match"]:
-        r["best_names_dataset_match"] = ind["names_match"]
-        r["best_names_dataset_score"] = ind["names_score"]
+import argparse
+import os
+import sys
+from typing import Optional, List
 
-    if ind["score"] >= 6:
-        r["predicted_entity_type"] = "Individual"
-        r["classification_rule"] = "6_individual_evidence_score"
-        r["classification_evidence"] = "; ".join(ind["reasons"])
-        r["evidence"] = f"Individual because evidence score={ind['score']} | " + "; ".join(ind["reasons"])
-        return r
+import pandas as pd
 
-    r["classification_rule"] = "7_other_cases_review"
-    r["classification_evidence"] = f"insufficient individual evidence score={ind['score']}"
-    r["evidence"] = (
-        f"Review because evidence score={ind['score']} is insufficient; "
-        + "; ".join(ind["reasons"])
+
+P2E_CANDIDATES = [
+    "P2E_Entity_Type",
+    "existing_entity_type_normalized",
+]
+
+PREDICTED_CANDIDATES = [
+    "predicted_entity_type",
+    "predicted_T",
+    "predicted_type",
+    "entity_type_predicted",
+]
+
+COMPARISON_CANDIDATES = [
+    "comparison_with_existing",
+    "comparison",
+]
+
+RULE_CANDIDATES = [
+    "classification_rule",
+]
+
+EVIDENCE_CANDIDATES = [
+    "classification_evidence",
+    "evidence",
+]
+
+LINE1_CANDIDATES = [
+    "LINE1",
+    "line1",
+]
+
+NORMALIZED_CANDIDATES = [
+    "normalized_line1",
+]
+
+BVD_CANDIDATES = [
+    "BVD_Entity_name",
+    "bvd_entity_name",
+]
+
+
+def pick_first_existing(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def normalize_label(value) -> str:
+    if pd.isna(value):
+        return ""
+    x = str(value).strip().lower()
+
+    if x in {"business", "company", "org", "organisation", "organization"}:
+        return "Business"
+    if x in {"individual", "person", "natural person"}:
+        return "Individual"
+    if x in {"review", "to review", "manual review"}:
+        return "Review"
+    if x in {"", "nan", "none", "null"}:
+        return ""
+    return str(value).strip()
+
+
+def has_value(value) -> bool:
+    if pd.isna(value):
+        return False
+    x = str(value).strip()
+    return x != "" and x.lower() not in {"nan", "none", "null"}
+
+
+def safe_pct(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return round((numerator / denominator) * 100.0, 2)
+
+
+def print_section(title: str):
+    print("
+" + "=" * 100)
+    print(title)
+    print("=" * 100)
+
+
+def print_series(title: str, series: pd.Series, total: Optional[int] = None):
+    print(f"
+{title}")
+    if series.empty:
+        print("  No data")
+        return
+    for idx, val in series.items():
+        if total is not None:
+            pct = safe_pct(int(val), total)
+            print(f"  - {idx}: {val} ({pct}%)")
+        else:
+            print(f"  - {idx}: {val}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Analyze classified beneficiary CSV output and print statistics, excluding rows with BVD reference."
     )
-    return r
+    parser.add_argument("--input", required=True, help="Path to classified output CSV")
+    parser.add_argument("--top", type=int, default=20, help="Top N examples to display")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.input):
+        raise FileNotFoundError(f"Input file not found: {args.input}")
+
+    df_raw = pd.read_csv(args.input, dtype=str, keep_default_na=False)
+
+    if df_raw.empty:
+        print("The input CSV is empty.")
+        sys.exit(0)
+
+    p2e_col = pick_first_existing(df_raw, P2E_CANDIDATES)
+    predicted_col = pick_first_existing(df_raw, PREDICTED_CANDIDATES)
+    comparison_col = pick_first_existing(df_raw, COMPARISON_CANDIDATES)
+    rule_col = pick_first_existing(df_raw, RULE_CANDIDATES)
+    evidence_col = pick_first_existing(df_raw, EVIDENCE_CANDIDATES)
+    line1_col = pick_first_existing(df_raw, LINE1_CANDIDATES)
+    normalized_col = pick_first_existing(df_raw, NORMALIZED_CANDIDATES)
+    bvd_col = pick_first_existing(df_raw, BVD_CANDIDATES)
+
+    if p2e_col is None:
+        raise ValueError("Could not find P2E column. Expected one of: " + ", ".join(P2E_CANDIDATES))
+    if predicted_col is None:
+        raise ValueError("Could not find predicted entity type column. Expected one of: " + ", ".join(PREDICTED_CANDIDATES))
+    if bvd_col is None:
+        raise ValueError("Could not find BVD reference column. Expected one of: " + ", ".join(BVD_CANDIDATES))
+
+    total_rows_before_filter = len(df_raw)
+
+    bvd_mask = df_raw[bvd_col].apply(has_value)
+    bvd_excluded_count = int(bvd_mask.sum())
+
+    # On exclut dès le début toutes les lignes avec une référence BVD
+    df = df_raw[~bvd_mask].copy()
+
+    total_rows = len(df)
+
+    if total_rows == 0:
+        print_section("GLOBAL OVERVIEW")
+        print(f"Total rows in input: {total_rows_before_filter}")
+        print(f"Rows excluded because {bvd_col} is filled: {bvd_excluded_count}")
+        print("No remaining rows after BVD exclusion.")
+        sys.exit(0)
+
+    df["_p2e_norm"] = df[p2e_col].apply(normalize_label)
+    df["_pred_norm"] = df[predicted_col].apply(normalize_label)
+
+    if comparison_col and comparison_col in df.columns:
+        df["_comparison_norm"] = df[comparison_col].astype(str).str.strip().str.lower()
+    else:
+        df["_comparison_norm"] = df.apply(
+            lambda r: (
+                "match"
+                if r["_p2e_norm"] and r["_pred_norm"] and r["_p2e_norm"] == r["_pred_norm"]
+                else "mismatched"
+                if r["_p2e_norm"] and r["_pred_norm"] and r["_p2e_norm"] != r["_pred_norm"]
+                else ""
+            ),
+            axis=1
+        )
+
+    p2e_counts = df["_p2e_norm"].replace("", "Missing").value_counts(dropna=False)
+    pred_counts = df["_pred_norm"].replace("", "Missing").value_counts(dropna=False)
+
+    mismatches = df[df["_comparison_norm"] == "mismatched"].copy()
+    matches = df[df["_comparison_norm"] == "match"].copy()
+    reviews = df[df["_pred_norm"] == "Review"].copy()
+
+    p2e_business = int((df["_p2e_norm"] == "Business").sum())
+    p2e_individual = int((df["_p2e_norm"] == "Individual").sum())
+    pred_business = int((df["_pred_norm"] == "Business").sum())
+    pred_individual = int((df["_pred_norm"] == "Individual").sum())
+    pred_review = int((df["_pred_norm"] == "Review").sum())
+
+    business_to_individual = df[(df["_p2e_norm"] == "Business") & (df["_pred_norm"] == "Individual")].copy()
+    individual_to_business = df[(df["_p2e_norm"] == "Individual") & (df["_pred_norm"] == "Business")].copy()
+    business_to_review = df[(df["_p2e_norm"] == "Business") & (df["_pred_norm"] == "Review")].copy()
+    individual_to_review = df[(df["_p2e_norm"] == "Individual") & (df["_pred_norm"] == "Review")].copy()
+
+    print_section("GLOBAL OVERVIEW")
+    print(f"Total rows in input file: {total_rows_before_filter}")
+    print(f"BVD column used: {bvd_col}")
+    print(f"Rows excluded because BVD_Entity_name is filled: {bvd_excluded_count} ({safe_pct(bvd_excluded_count, total_rows_before_filter)}%)")
+    print(f"Rows kept for all statistics: {total_rows} ({safe_pct(total_rows, total_rows_before_filter)}%)")
+
+    print(f"
+P2E column used: {p2e_col}")
+    print(f"Predicted column used: {predicted_col}")
+    print(f"Comparison column used: {comparison_col if comparison_col else 'derived in script'}")
+    print(f"Rule column used: {rule_col if rule_col else 'not found'}")
+    print(f"Evidence column used: {evidence_col if evidence_col else 'not found'}")
+    print(f"LINE1 column used: {line1_col if line1_col else 'not found'}")
+    print(f"Normalized LINE1 column used: {normalized_col if normalized_col else 'not found'}")
+
+    print_section("P2E VS ALGORITHM TOTALS (AFTER BVD EXCLUSION)")
+    print_series("P2E distribution", p2e_counts, total_rows)
+    print_series("Predicted distribution", pred_counts, total_rows)
+
+    print("
+Direct comparison summary")
+    print(f"  - P2E Business: {p2e_business} ({safe_pct(p2e_business, total_rows)}%)")
+    print(f"  - P2E Individual: {p2e_individual} ({safe_pct(p2e_individual, total_rows)}%)")
+    print(f"  - Predicted Business: {pred_business} ({safe_pct(pred_business, total_rows)}%)")
+    print(f"  - Predicted Individual: {pred_individual} ({safe_pct(pred_individual, total_rows)}%)")
+    print(f"  - Predicted Review: {pred_review} ({safe_pct(pred_review, total_rows)}%)")
+
+    print_section("MATCH / MISMATCH STATISTICS (AFTER BVD EXCLUSION)")
+    print(f"Matches: {len(matches)} ({safe_pct(len(matches), total_rows)}%)")
+    print(f"Mismatches: {len(mismatches)} ({safe_pct(len(mismatches), total_rows)}%)")
+
+    print("
+Mismatch directions")
+    print(f"  - P2E Business -> Predicted Individual: {len(business_to_individual)} ({safe_pct(len(business_to_individual), total_rows)}%)")
+    print(f"  - P2E Individual -> Predicted Business: {len(individual_to_business)} ({safe_pct(len(individual_to_business), total_rows)}%)")
+    print(f"  - P2E Business -> Predicted Review: {len(business_to_review)} ({safe_pct(len(business_to_review), total_rows)}%)")
+    print(f"  - P2E Individual -> Predicted Review: {len(individual_to_review)} ({safe_pct(len(individual_to_review), total_rows)}%)")
+
+    print_section("REVIEW STATISTICS (AFTER BVD EXCLUSION)")
+    print(f"Total Review cases: {len(reviews)} ({safe_pct(len(reviews), total_rows)}%)")
+    if len(reviews) > 0:
+        print(f"  - Review among P2E Business: {len(business_to_review)} ({safe_pct(len(business_to_review), len(reviews))}%)")
+        print(f"  - Review among P2E Individual: {len(individual_to_review)} ({safe_pct(len(individual_to_review), len(reviews))}%)")
+
+    if rule_col:
+        print_section("CLASSIFICATION RULE STATISTICS (AFTER BVD EXCLUSION)")
+        rule_counts = df[rule_col].replace("", "Missing").value_counts(dropna=False)
+        print_series("All classification rules", rule_counts, total_rows)
+
+        if len(mismatches) > 0:
+            mismatch_rule_counts = mismatches[rule_col].replace("", "Missing").value_counts(dropna=False)
+            print_series("Rules involved in mismatches", mismatch_rule_counts, len(mismatches))
+
+        if len(reviews) > 0:
+            review_rule_counts = reviews[rule_col].replace("", "Missing").value_counts(dropna=False)
+            print_series("Rules for Review cases", review_rule_counts, len(reviews))
+
+    if rule_col and len(business_to_individual) > 0:
+        print_section("TOP RULES CAUSING P2E BUSINESS -> PREDICTED INDIVIDUAL")
+        s = business_to_individual[rule_col].replace("", "Missing").value_counts().head(args.top)
+        print_series("Business -> Individual by rule", s, len(business_to_individual))
+
+    if rule_col and len(individual_to_business) > 0:
+        print_section("TOP RULES CAUSING P2E INDIVIDUAL -> PREDICTED BUSINESS")
+        s = individual_to_business[rule_col].replace("", "Missing").value_counts().head(args.top)
+        print_series("Individual -> Business by rule", s, len(individual_to_business))
+
+    if evidence_col:
+        print_section("TOP EVIDENCE PATTERNS IN MISMATCHES")
+        top_evidence = (
+            mismatches[evidence_col]
+            .replace("", "Missing")
+            .value_counts()
+            .head(args.top)
+        )
+        print_series("Most frequent mismatch evidences", top_evidence, len(mismatches) if len(mismatches) else None)
+
+    def print_examples(title: str, subset: pd.DataFrame, n: int = 15):
+        print(f"
+{title}")
+        if subset.empty:
+            print("  No examples")
+            return
+
+        cols = []
+        if line1_col:
+            cols.append(line1_col)
+        if normalized_col:
+            cols.append(normalized_col)
+        cols += [p2e_col, predicted_col]
+        if rule_col:
+            cols.append(rule_col)
+        if evidence_col:
+            cols.append(evidence_col)
+
+        cols = [c for c in cols if c in subset.columns]
+        sample = subset[cols].head(n)
+
+        for _, row in sample.iterrows():
+            print("-" * 100)
+            for c in cols:
+                print(f"{c}: {row[c]}")
+
+    print_section("EXAMPLES FOR NOTEBOOK LM / MANUAL REVIEW (AFTER BVD EXCLUSION)")
+    print_examples("Examples of P2E Business -> Predicted Individual", business_to_individual, args.top)
+    print_examples("Examples of P2E Individual -> Predicted Business", individual_to_business, args.top)
+    print_examples("Examples of Review cases", reviews, args.top)
+
+    print_section("NOTEBOOK LM REFERENCE SUMMARY (AFTER BVD EXCLUSION)")
+    print("Key points:")
+    print(f"- Total rows in input file: {total_rows_before_filter}")
+    print(f"- Rows excluded because BVD_Entity_name is filled: {bvd_excluded_count}")
+    print(f"- Rows actually analyzed: {total_rows}")
+    print(f"- P2E Business vs Individual: {p2e_business} vs {p2e_individual}")
+    print(f"- Predicted Business vs Individual vs Review: {pred_business} vs {pred_individual} vs {pred_review}")
+    print(f"- Total mismatches: {len(mismatches)} ({safe_pct(len(mismatches), total_rows)}%)")
+    print(f"- Business -> Individual mismatches: {len(business_to_individual)}")
+    print(f"- Individual -> Business mismatches: {len(individual_to_business)}")
+    print(f"- Review cases: {len(reviews)} ({safe_pct(len(reviews), total_rows)}%)")
+
+    if rule_col and len(mismatches) > 0:
+        top_rules = mismatches[rule_col].replace("", "Missing").value_counts().head(5)
+        print("
+Top mismatch rules:")
+        for rule_name, cnt in top_rules.items():
+            print(f"  - {rule_name}: {cnt}")
+
+    print("
+Done.")
+
+
+if __name__ == "__main__":
+    main()
